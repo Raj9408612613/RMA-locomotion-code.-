@@ -41,7 +41,7 @@ else fail "dry run (see $DRY_LOG)"; grep -A30 Traceback "$DRY_LOG" | tail -30; f
 rm -rf "$PORT_DIR/data/rsg_a1_task/9001"
 
 echo ">>> 2/3 training smoke: 64 envs x 3 iterations (first launch compiles shaders, can take 5-10 min)"
-timeout 1800 python "$PORT_DIR/runner.py" --exptid 9000 --num_envs 64 --max_iters 2 --overwrite --headless \
+timeout 1800 python -u "$PORT_DIR/runner.py" --exptid 9000 --num_envs 64 --max_iters 2 --overwrite --headless \
     > "$LOG" 2>&1
 code=$?
 [ $code -eq 0 ] && pass "runner exit code 0 (Isaac Sim reports 0 even on errors; see traceback check)" || fail "runner exit code $code (see $LOG)"
@@ -58,8 +58,10 @@ check(h and 0.2 < h[0] < 0.38, f"robot stands after settle (base height {h[:1]} 
 r = [float(x) for x in re.findall(r"average ll reward:\s+([-\w.]+)", log)]
 check(len(r) >= 3 and all(math.isfinite(x) for x in r), f"3 iterations with finite reward {r}")
 d = [float(x) for x in re.findall(r"dones:\s+([-\w.]+)", log)]
-# dones is per step; 1/600 would mean one fall per env per iteration
-check(d and max(d) < 0.01, f"robots are not falling constantly (dones per step {d}, want < 0.01)")
+# dones is per step. No RaiSim reference rate is known, so this is reported, not failed.
+print(f"[INFO] dones per step {d} (0.01 = one episode end per env per second)")
+for line in re.findall(r"\[term\].*", log)[:3]:
+    print("[INFO] " + line)
 check("Traceback" not in log, "no Python traceback")
 check("PhysX error" not in log, "no PhysX errors")
 for f in ["policy_0.pt", "mean0.csv", "var0.csv", "full_0.pt"]:

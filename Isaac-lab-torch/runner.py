@@ -6,6 +6,7 @@ Run with Isaac Lab's python, e.g.:
 import argparse
 import os
 import sys
+sys.stdout.reconfigure(line_buffering=True)  # keep log lines when Isaac Sim exits
 
 from isaaclab.app import AppLauncher
 

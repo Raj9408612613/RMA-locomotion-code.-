@@ -173,6 +173,8 @@ class A1RmaEnv(DirectRLEnv):
         self.isDown = torch.zeros(n, dtype=torch.bool, device=d)
         self.canonical_step_height = torch.full((n,), 0.1, device=d)
         self.resample_on_reset = False
+        self.term_counts = torch.zeros(5, device=d)  # illegal contact, orientation, height, yaw, timeout
+        self.term_steps = 0
 
         # physx-side buffers (CPU) for mass / COM / friction randomization
         view = self.robot.root_physx_view
@@ -352,6 +354,12 @@ class A1RmaEnv(DirectRLEnv):
         base_h = self.robot.data.root_pos_w[:, 2] - self.terrain.heights_at(self.robot.data.root_pos_w[:, :2])
         print(f"[settle] base height above terrain: mean {base_h.mean().item():.3f} m, "
               f"min {base_h.min().item():.3f} m (expect ~0.25-0.33 on flat ground)")
+        if self.term_steps > 0:
+            rate = (self.term_counts / self.term_steps).tolist()
+            print("[term] per-step rate since last reset: illegal_contact {:.5f} | orientation {:.5f} | "
+                  "base_height {:.5f} | yaw {:.5f} | timeout {:.5f}".format(*rate))
+            self.term_counts.zero_()
+            self.term_steps = 0
 
     def curriculum_update(self):
         self.cost_coeff = self.cost_coeff ** self.cost_decay_fac
@@ -487,6 +495,8 @@ class A1RmaEnv(DirectRLEnv):
         yaw_off = (~self.sampleCmds) & (not self.isEval) & (self.euler[:, 2].abs() > 0.5)
         terminated = illegal | bad_orient | too_low | yaw_off
         time_out = (self.step_counter > 1200) & ~terminated
+        self.term_counts += torch.stack([illegal, bad_orient, too_low, yaw_off, time_out]).float().sum(-1)
+        self.term_steps += n
         return terminated, time_out
 
     def _get_rewards(self):

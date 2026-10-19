@@ -286,8 +286,12 @@ ensure_ext() {     # $1 = dist name, $2 = source subdir, $3.. = extra pip flags
     fi
 }
 ensure_ext isaaclab        isaaclab        --no-deps
-pip install toml gymnasium==1.2.1 trimesh einops warp-lang \
-    prettytable==3.3.0 flatdict
+# isaaclab's INSTALL_REQUIRES at v2.3.2 (source/isaaclab/setup.py) minus torch, which is
+# pinned above. The core is installed --no-deps, so every runtime dep must be listed here:
+# missing hidapi made the auto-loaded isaaclab_tasks extension fail ("No module named 'hid'").
+pip install "numpy<2" "onnx>=1.18.0" prettytable==3.3.0 toml "hidapi==0.14.0.post2" \
+    gymnasium==1.2.1 trimesh "pyglet<2" "transformers==4.57.6" einops warp-lang \
+    "pillow==11.3.0" "starlette==0.49.1" "flatdict==4.0.1" packaging
 ensure_ext isaaclab_assets isaaclab_assets --use-deprecated=legacy-resolver
 ensure_ext isaaclab_tasks  isaaclab_tasks  --use-deprecated=legacy-resolver
 pip install tensorboard "imageio[ffmpeg]" h5py

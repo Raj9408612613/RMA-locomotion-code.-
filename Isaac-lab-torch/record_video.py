@@ -11,6 +11,7 @@ the RMA network trained by runner.py (Raisim-gym-torch/algo); no omni_spot netwo
 import argparse
 import os
 import sys
+sys.stdout.reconfigure(line_buffering=True)  # keep log lines when Isaac Sim exits
 
 from isaaclab.app import AppLauncher
 
