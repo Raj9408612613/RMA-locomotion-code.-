@@ -291,7 +291,10 @@ ensure_ext isaaclab        isaaclab        --no-deps
 # missing hidapi made the auto-loaded isaaclab_tasks extension fail ("No module named 'hid'").
 pip install "numpy<2" "onnx>=1.18.0" prettytable==3.3.0 toml "hidapi==0.14.0.post2" \
     gymnasium==1.2.1 trimesh "pyglet<2" "transformers==4.57.6" einops warp-lang \
-    "pillow==11.3.0" "starlette==0.49.1" "flatdict==4.0.1" packaging
+    "pillow==11.3.0" "starlette==0.49.1" packaging
+# flatdict 4.0.1 is sdist-only and its setup.py needs pkg_resources, which the newest
+# setuptools (used by pip's isolated build env) dropped -> build with our setuptools<75.
+pip install --no-build-isolation "flatdict==4.0.1"
 ensure_ext isaaclab_assets isaaclab_assets --use-deprecated=legacy-resolver
 ensure_ext isaaclab_tasks  isaaclab_tasks  --use-deprecated=legacy-resolver
 pip install tensorboard "imageio[ffmpeg]" h5py
