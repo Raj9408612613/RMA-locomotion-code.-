@@ -19,7 +19,7 @@ class RaisimGymVecEnv:
         self._observation = np.zeros([self.num_envs, self.num_obs], dtype=np.float32)
         self.obs_rms = RunningMeanStd(shape=[self.num_envs, self.num_obs])
         self._reward = np.zeros(self.num_envs, dtype=np.float32)
-        self._done = np.zeros(self.num_envs, dtype=np.bool)
+        self._done = np.zeros(self.num_envs, dtype=bool)
         self.rewards = [[] for _ in range(self.num_envs)]
         self.displacements = np.zeros([self.num_envs, 4], dtype=np.float32)
         self.reward_info = np.zeros([self.num_envs, 16], dtype=np.float32)
@@ -54,6 +54,9 @@ class RaisimGymVecEnv:
         var_file_name = dir_name + "/var" + str(iteration) + ".csv"
         loaded_mean = np.loadtxt(mean_file_name, dtype=np.float32)
         loaded_var = np.loadtxt(var_file_name, dtype=np.float32)
+        # rows of the running stats are identical; tile so files saved with another num_envs load
+        loaded_mean = np.tile(np.atleast_2d(loaded_mean)[:1], (self.num_envs, 1))
+        loaded_var = np.tile(np.atleast_2d(loaded_var)[:1], (self.num_envs, 1))
         #if policy_type == 0: (for cvpr)
         #    #self.obs_rms.mean[:,:loaded_mean.shape[1]] = loaded_mean
         #    #self.obs_rms.var[:,:loaded_var.shape[1]] = loaded_var
