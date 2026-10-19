@@ -14,9 +14,16 @@ PIPELINE_DIR="${PIPELINE_DIR:-$HOME/nv-omni-tr-pipeline}"
 RUN_DIR="$PORT_DIR/data/rsg_a1_task/9000"
 LOG="/tmp/rma_smoke_train.log"
 FAIL=0
+# activate the conda env from setup_isaac.sh if this shell has not (e.g. ~/.bashrc not re-sourced)
+if [ "${CONDA_DEFAULT_ENV:-}" != "isaac" ] && [ -x "$HOME/miniconda3/bin/conda" ]; then
+    eval "$("$HOME/miniconda3/bin/conda" shell.bash hook)" && conda activate isaac \
+        && echo ">>> activated conda env 'isaac'"
+fi
+python -c "import isaaclab" 2>/dev/null || { echo "[FAIL] isaaclab not importable with $(command -v python); run: conda activate isaac"; exit 1; }
 if [ "${OMNI_KIT_ACCEPT_EULA:-}" != "YES" ]; then
     echo "[FAIL] OMNI_KIT_ACCEPT_EULA is not set; Isaac Sim would abort at its EULA prompt."
-    echo "       If you accept the NVIDIA Omniverse EULA: export OMNI_KIT_ACCEPT_EULA=YES  (or re-run setup_isaac.sh)"
+    echo "       If you accept the NVIDIA Omniverse EULA, run once:"
+    echo "         echo 'export OMNI_KIT_ACCEPT_EULA=YES' >> ~/.bashrc && source ~/.bashrc"
     exit 1
 fi
 pass() { echo "[PASS] $*"; }
