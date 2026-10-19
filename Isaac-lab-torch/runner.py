@@ -159,7 +159,7 @@ loaded_graph_flat = torch.jit.load(flat_policy_load_path, map_location=torch.dev
 flat_expert = ppo_module.Steps_Expert(loaded_graph_flat, device=device_type, baseDim=42,
                                       geomDim=2, n_futures=1, num_g1=n_futures)
 # Encoders loading from blind stairs policy
-checkpoint = torch.load(os.path.join(base_policy_dir, "full_22000.pt"))
+checkpoint = torch.load(os.path.join(base_policy_dir, "full_22000.pt"), map_location=device_type)
 blind_policy_state_dict = checkpoint['actor_architecture_state_dict']
 own_state = actor.architecture.state_dict()
 for name, param in blind_policy_state_dict.items():
@@ -190,7 +190,7 @@ if wandb:
 penalty_scale = np.array([cfg['environment']['lateralVelRewardCoeff'], cfg['environment']['angularVelRewardCoeff'], cfg['environment']['deltaTorqueRewardCoeff'], cfg['environment']['actionRewardCoeff'], cfg['environment']['sidewaysRewardCoeff'], cfg['environment']['jointSpeedRewardCoeff'], cfg['environment']['deltaContactRewardCoeff'], cfg['environment']['deltaReleaseRewardCoeff'], cfg['environment']['footSlipRewardCoeff'], cfg['environment']['upwardRewardCoeff'], cfg['environment']['workRewardCoeff'], cfg['environment']['yAccRewardCoeff'], 1., 1., 1.])
 
 if args.loadid is not None:
-    checkpoint = torch.load(saver.data_dir+"/full_"+str(args.loadid)+'.pt')
+    checkpoint = torch.load(saver.data_dir+"/full_"+str(args.loadid)+'.pt', map_location=device_type)
     actor.architecture.load_state_dict(checkpoint['actor_architecture_state_dict'])
     actor.distribution.load_state_dict(checkpoint['actor_distribution_state_dict'])
     critic.architecture.load_state_dict(checkpoint['critic_architecture_state_dict'])

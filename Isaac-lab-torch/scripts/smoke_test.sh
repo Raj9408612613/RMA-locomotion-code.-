@@ -25,11 +25,19 @@ fail() { echo "[FAIL] $*"; FAIL=1; }
 echo ">>> 1/3 terrain unit test"
 python "$PORT_DIR/tests/test_terrain.py" && pass "terrain" || fail "terrain"
 
+echo ">>> 1b/3 CPU dry run of runner.py against a stand-in Isaac Lab (catches Python errors without the GPU)"
+DRY_LOG=/tmp/rma_smoke_dryrun.log
+timeout 900 python "$PORT_DIR/tests/fake_isaac.py" "$PORT_DIR/runner.py" --exptid 9001 --num_envs 8 --max_iters 1 \
+    --overwrite --headless --debug > "$DRY_LOG" 2>&1
+if grep -q "1th iteration" "$DRY_LOG" && ! grep -q Traceback "$DRY_LOG"; then pass "dry run"
+else fail "dry run (see $DRY_LOG)"; grep -A30 Traceback "$DRY_LOG" | tail -30; fi
+rm -rf "$PORT_DIR/data/rsg_a1_task/9001"
+
 echo ">>> 2/3 training smoke: 64 envs x 3 iterations (first launch compiles shaders, can take 5-10 min)"
 timeout 1800 python "$PORT_DIR/runner.py" --exptid 9000 --num_envs 64 --max_iters 2 --overwrite --headless \
     > "$LOG" 2>&1
 code=$?
-[ $code -eq 0 ] && pass "runner exited cleanly" || fail "runner exit code $code (see $LOG)"
+[ $code -eq 0 ] && pass "runner exit code 0 (Isaac Sim reports 0 even on errors; see traceback check)" || fail "runner exit code $code (see $LOG)"
 python - "$LOG" "$RUN_DIR" <<'PY' || FAIL=1
 import math, os, re, sys
 log, run_dir = open(sys.argv[1], errors="replace").read(), sys.argv[2]
@@ -49,6 +57,9 @@ check("Traceback" not in log, "no Python traceback")
 check("PhysX error" not in log, "no PhysX errors")
 for f in ["policy_0.pt", "mean0.csv", "var0.csv", "full_0.pt"]:
     check(os.path.isfile(os.path.join(run_dir, f)), f"checkpoint file {f}")
+if "Traceback" in log:  # Isaac Sim's launcher exits 0 even on a Python exception: show it
+    i = log.rfind("Traceback")
+    print("------ traceback from " + sys.argv[1] + " ------\n" + log[i:i + 4000])
 sys.exit(0 if ok else 1)
 PY
 
