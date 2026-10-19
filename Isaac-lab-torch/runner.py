@@ -17,6 +17,7 @@ parser.add_argument("--loadid", type = int, default = None)
 parser.add_argument("--gpu", type = int, default = 0)
 parser.add_argument("--name", type = str)
 parser.add_argument("--num_envs", type = int, default = None)
+parser.add_argument("--max_iters", type = int, default = 500000, help='last iteration to run (inclusive)')
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 args.device = 'cpu' if args.debug else 'cuda:{}'.format(args.gpu)
@@ -216,7 +217,7 @@ rl_coeff = 0.3
 ppo.update_rl_coeff(rl_coeff)
 
 
-for update in range(500001) if args.loadid is None else range(args.loadid + 1, 500001):
+for update in range(args.max_iters + 1) if args.loadid is None else range(args.loadid + 1, args.max_iters + 1):
     start = time.time()
     env.reset()
     reward_ll_sum = 0

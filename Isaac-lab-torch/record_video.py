@@ -4,6 +4,9 @@
         --pipeline_dir ~/nv-omni-tr-pipeline --headless --enable_cameras
 
 `--iter 0` records the starting point (the blind base policy loaded by runner.py).
+
+Only the frame-capture/MP4 helper `record_episodes` comes from nv-omni-tr-pipeline. The policy is
+the RMA network trained by runner.py (Raisim-gym-torch/algo); no omni_spot network or trainer is used.
 """
 import argparse
 import os

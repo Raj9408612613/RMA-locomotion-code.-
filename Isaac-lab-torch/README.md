@@ -11,34 +11,50 @@ modules, `RaisimGymVecEnv` normalisation and the `Base-policy/` checkpoints are 
 | `isaac_wrapper.py` | compiled pybind module `rsg_a1_task.RaisimGymEnv` |
 | `runner.py`, `cfg.yaml` | `rsg_a1_task/runner.py`, `cfg.yaml` |
 
-## Run on EC2 (same stack as nv-omni-tr-pipeline: Isaac Lab v2.3.2, Isaac Sim 5.1, conda env `isaac`)
+## Run on EC2: step by step
 
-```bash
-# 1. one-time setup (reboots once for the driver, then re-run)
-git clone https://github.com/Raj9408612613/nv-omni-tr-pipeline ~/nv-omni-tr-pipeline
-bash ~/nv-omni-tr-pipeline/scripts/isaac_run.sh
-conda activate isaac
-git clone -b claude/blissful-edison-alxpwz https://github.com/Raj9408612613/RMA-locomotion-code.- ~/rma
-cd ~/rma
-pip install ruamel.yaml trimesh "imageio[ffmpeg]"
+Only the **software stack** (Isaac Sim 5.1, Isaac Lab v2.3.2, Python 3.11, torch 2.7 cu128, conda env `isaac`)
+and the **MP4 helper** (`omni_spot/video_recorder.py: record_episodes`) come from nv-omni-tr-pipeline.
+The networks, PPO and base policy are RMA's own (`Raisim-gym-torch/algo`, `Base-policy/`).
 
-# 2. CPU test (seconds)
-python Isaac-lab-torch/tests/test_terrain.py
-
-# 3. smoke test: 64 envs, stop with Ctrl-C after 2-3 iterations
-python Isaac-lab-torch/runner.py --exptid 0 --num_envs 64 --headless --overwrite
-#    check: "[settle] base height above terrain" ~0.25-0.33 m, rewards finite, dones well below 1.0
-
-# 4. video of the starting policy (checkpoint 0 is written by the smoke test)
-python Isaac-lab-torch/record_video.py --run_dir Isaac-lab-torch/data/rsg_a1_task/0000 --iter 0 --headless
-#    -> Isaac-lab-torch/data/rsg_a1_task/0000/video_0.mp4  (copy with scp)
-
-# 5. full training (in tmux; log the output)
-python Isaac-lab-torch/runner.py --exptid 1 --num_envs 1024 --headless 2>&1 | tee train_1.log
-
-# 6. video of a checkpoint (one is written every eval_every_n = 2000 iterations)
-python Isaac-lab-torch/record_video.py --run_dir Isaac-lab-torch/data/rsg_a1_task/0001 --iter 10000 --headless
-```
+1. **Start the instance.** Use Ubuntu 22.04/24.04 with an NVIDIA RTX-class GPU (Isaac Sim needs RT cores, so A10G/L4/L40S
+   work but T4/V100/A100 do not render), about 100 GB disk and ports for SSH.
+2. **Get the code.**
+   ```bash
+   git clone -b claude/blissful-edison-alxpwz https://github.com/Raj9408612613/RMA-locomotion-code.- ~/rma
+   ```
+3. **Install everything.** `Isaac-lab-torch/scripts/setup_isaac.sh` is a copy of the pipeline's
+   `isaac_run.sh` (same pinned versions). Stage 5 is changed to install `ruamel.yaml trimesh imageio[ffmpeg]`,
+   clone nv-omni-tr-pipeline (for the recorder) and run the RMA smoke test.
+   ```bash
+   bash ~/rma/Isaac-lab-torch/scripts/setup_isaac.sh   # first run installs the driver and asks you to reboot
+   sudo reboot
+   bash ~/rma/Isaac-lab-torch/scripts/setup_isaac.sh   # second run does the rest and ends with the smoke test
+   ```
+   The torch pin is `cu128` (Blackwell). On an older GPU, edit `TORCH_CUDA`/`NVIDIA_DRIVER` at the top first.
+4. **Check that it runs.** The smoke test runs automatically at the end of setup. Re-run it any time with:
+   ```bash
+   conda activate isaac && cd ~/rma
+   bash Isaac-lab-torch/scripts/smoke_test.sh
+   ```
+   It must end with `[PASS] smoke test passed`. It checks the terrain test, 3 PPO iterations with 64 envs
+   (clean exit, robot standing about 0.3 m after settle, finite rewards, few falls, no traceback or PhysX error,
+   checkpoint files written) and a 1-episode MP4 of checkpoint 0. Logs: `/tmp/rma_smoke_train.log`,
+   `/tmp/rma_smoke_video.log`.
+5. **Watch the starting policy** before spending GPU hours:
+   ```bash
+   scp ubuntu@<ec2-ip>:~/rma/Isaac-lab-torch/data/rsg_a1_task/9000/video_0.mp4 .
+   ```
+   It should show the base policy walking. If it falls or twitches, stop and debug (see "Differences" below).
+6. **Train** (in `tmux`):
+   ```bash
+   python Isaac-lab-torch/runner.py --exptid 1 --num_envs 1024 --max_iters 10000 --headless 2>&1 | tee ~/rma_train_1.log
+   # continue later: add --loadid 10000 --overwrite --max_iters 20000 (same --exptid)
+   ```
+7. **Make a video** of any saved checkpoint (one every 2000 iterations):
+   ```bash
+   python Isaac-lab-torch/record_video.py --run_dir Isaac-lab-torch/data/rsg_a1_task/0001 --iter 10000 --headless
+   ```
 
 `record_video.py` uses `omni_spot/video_recorder.py` from nv-omni-tr-pipeline (`--pipeline_dir`,
 default `~/nv-omni-tr-pipeline`). It films env 0 with a chase camera (`viewer` in `A1RmaEnvCfg`).
@@ -57,7 +73,7 @@ but the schedule stays the same:
 | 8200 | all levels unlocked (up to 0.23 m) |
 
 Run to **10 000 iterations** first. That is the first checkpoint after the full curriculum. Make a video,
-then continue (`--loadid 10000`) to about 20 000 if rewards and `dones` are still improving. The base
+then continue (`--loadid 10000 --overwrite --max_iters 20000`) to about 20 000 if rewards and `dones` are still improving. The base
 policy is named `_22000`, which suggests the original runs were about that long. Time per iteration is
 printed in the log (`time elapsed in this iteration`). Multiply it out to estimate the total.
 
