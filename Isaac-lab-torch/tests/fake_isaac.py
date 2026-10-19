@@ -94,6 +94,10 @@ class Robot:
         d.default_root_state = torch.zeros(n, 13); d.default_root_state[:, 3] = 1
         d.default_joint_pos = torch.zeros(n, 12); self.effort = torch.zeros(n, 12)
     def set_joint_effort_target(self, t, joint_ids=None): self.effort[:, joint_ids] = t
+    class _Wrench:
+        def set_forces_and_torques(self, forces=None, torques=None, positions=None, body_ids=None, env_ids=None, is_global=False):
+            assert forces.shape[-1] == 3 and (env_ids is not None or forces.shape[1] == len(body_ids))
+    instantaneous_wrench_composer = _Wrench()
     def set_external_force_and_torque(self, f, t, positions=None, body_ids=None, env_ids=None, is_global=False):
         assert f.shape[-1] == 3
     def write_root_pose_to_sim(self, p, env_ids=None):

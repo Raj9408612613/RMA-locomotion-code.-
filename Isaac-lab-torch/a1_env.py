@@ -11,6 +11,7 @@ Must be imported after `isaaclab.app.AppLauncher` has started the simulator.
 from __future__ import annotations
 
 import math
+import time
 
 import torch
 
@@ -78,6 +79,9 @@ class A1RmaEnvCfg(DirectRLEnvCfg):
 
     spawn_height = 0.4  # gc_init_[2] = terrain + 0.4
     settle_steps = 50   # physics steps holding the default pose after a full reset
+    # friction / mass / COM changes go through slow PhysX CPU->GPU calls; they are queued and
+    # written for all queued envs together every `phys_flush_every` control steps (and on full resets)
+    phys_flush_every = 10
 
     # filled from the RaiSim yaml (cfg['environment']) by `apply_yaml`
     task: dict = {}
@@ -173,6 +177,14 @@ class A1RmaEnv(DirectRLEnv):
         self.isDown = torch.zeros(n, dtype=torch.bool, device=d)
         self.canonical_step_height = torch.full((n,), 0.1, device=d)
         self.resample_on_reset = False
+        self._base_id_t = torch.tensor([self._base_id], dtype=torch.int32, device=d)
+        self._phys_pending = torch.zeros(n, dtype=torch.bool, device=d)
+        self._pend_friction = self.friction.clone()
+        self._pend_mass_params = self.mass_params.clone()
+        self._pend_base_mass = torch.zeros(n, device=d)
+        self._pend_com = z(3)
+        self._phys_time = 0.0
+        self._ctrl_steps = 0
         self.term_counts = torch.zeros(5, device=d)  # illegal contact, orientation, height, yaw, timeout
         self.term_steps = 0
 
@@ -244,19 +256,18 @@ class A1RmaEnv(DirectRLEnv):
             print(f"speed_vec: {(dms + 0.5).tolist()}, {das.tolist()}")
 
     def randomize_sim_params(self, ids):
+        """Resample friction, PD gains, base mass/COM and motor strength for `ids`.
+        Gains and motor strength apply now; friction/mass/COM (and their observations) apply at
+        the next flush_physics() so the observation always matches the simulated values."""
         m = len(ids)
         if m == 0:
             return
         d = self.device
         if self.rand_friction:
             fl = torch.tensor([0.5, 0.7, 0.9, 1.2, 1.5, 1.8], device=d)
-            self.friction[ids] = fl[torch.randint(0, 6, (m,), device=d)]
+            self._pend_friction[ids] = fl[torch.randint(0, 6, (m,), device=d)]
         else:
-            self.friction[ids] = 0.8
-        ids_cpu = ids.cpu()
-        self._materials[ids_cpu, :, 0] = self.friction[ids].cpu()[:, None]
-        self._materials[ids_cpu, :, 1] = self.friction[ids].cpu()[:, None]
-        self.robot.root_physx_view.set_material_properties(self._materials, ids_cpu)
+            self._pend_friction[ids] = 0.8
 
         if self.rand_gains:
             self.kp[ids] = self.pid_coeff + 5.0 * self._rand(m)
@@ -267,15 +278,35 @@ class A1RmaEnv(DirectRLEnv):
         if self.rand_mass:
             mass_rand = 0.5 * (1 + self._rand(m))
             com = torch.stack([0.1 * self._rand(m), 0.05 * self._rand(m), torch.zeros(m, device=d)], -1)
-            self._masses[ids_cpu, self._base_id] = (6.0 + 2.0 * mass_rand).cpu()
-            self._coms[ids_cpu, self._base_id, :3] = com.cpu()
-            self.robot.root_physx_view.set_masses(self._masses, ids_cpu)
-            self.robot.root_physx_view.set_coms(self._coms, ids_cpu)
-            self.mass_params[ids] = torch.stack([mass_rand, com[:, 0], com[:, 1]], -1)
+            self._pend_base_mass[ids] = 6.0 + 2.0 * mass_rand
+            self._pend_com[ids] = com
+            self._pend_mass_params[ids] = torch.stack([mass_rand, com[:, 0], com[:, 1]], -1)
         else:
-            self.mass_params[ids] = torch.tensor([0.5, 0.0, 0.0], device=d)
+            self._pend_mass_params[ids] = torch.tensor([0.5, 0.0, 0.0], device=d)
 
         self.motor_strength[ids] = (1 - 0.1 * self._rand(m, 12)) if self.rand_motor else 1.0
+        self._phys_pending[ids] = True
+
+    def flush_physics(self):
+        """Write queued friction / mass / COM to PhysX in one call per property."""
+        ids = self._phys_pending.nonzero().squeeze(-1)
+        if len(ids) == 0:
+            return
+        t0 = time.perf_counter()
+        ids_cpu = ids.cpu()
+        fr = self._pend_friction[ids].cpu()[:, None]
+        self._materials[ids_cpu, :, 0] = fr
+        self._materials[ids_cpu, :, 1] = fr
+        self.robot.root_physx_view.set_material_properties(self._materials, ids_cpu)
+        if self.rand_mass:
+            self._masses[ids_cpu, self._base_id] = self._pend_base_mass[ids].cpu()
+            self._coms[ids_cpu, self._base_id, :3] = self._pend_com[ids].cpu()
+            self.robot.root_physx_view.set_masses(self._masses, ids_cpu)
+            self.robot.root_physx_view.set_coms(self._coms, ids_cpu)
+        self.friction[ids] = self._pend_friction[ids]
+        self.mass_params[ids] = self._pend_mass_params[ids]
+        self._phys_pending[ids] = False
+        self._phys_time += time.perf_counter() - t0
 
     def select_terrain(self, ids):
         """Equivalent of the terrain switch in reset(): pick a new tile for envs `ids`."""
@@ -340,6 +371,7 @@ class A1RmaEnv(DirectRLEnv):
 
     def settle(self):
         """Hold the default pose for `settle_steps` physics steps (RaiSim reset(): 50 integrate)."""
+        self.flush_physics()
         self.p_target[:] = self.action_mean
         for _ in range(self.cfg.settle_steps):
             self._apply_pd()
@@ -360,6 +392,9 @@ class A1RmaEnv(DirectRLEnv):
                   "base_height {:.5f} | yaw {:.5f} | timeout {:.5f}".format(*rate))
             self.term_counts.zero_()
             self.term_steps = 0
+        if self._ctrl_steps > 0:
+            print(f"[time] PhysX randomization writes since last reset: {self._phys_time:.2f} s")
+            self._phys_time = 0.0
 
     def curriculum_update(self):
         self.cost_coeff = self.cost_coeff ** self.cost_decay_fac
@@ -375,6 +410,9 @@ class A1RmaEnv(DirectRLEnv):
         sc = self.step_counter
         self.sample_goals(((sc % (300 + self.res_goal)) == 300 + self.res_goal - 1).nonzero().squeeze(-1))
         self.randomize_sim_params(((sc % (50 + self.res_env)) == 50 + self.res_env - 1).nonzero().squeeze(-1))
+        self._ctrl_steps += 1
+        if self._ctrl_steps % self.cfg.phys_flush_every == 0:
+            self.flush_physics()
         self.act_hist = torch.cat([self.act_hist[:, 1:], actions[:, None].clone()], 1)
         action = self.act_hist[:, 0]  # act_history[size - 3]: two control steps of delay
         self.p_target = action * self.motor_strength * self.action_std + self.action_mean
@@ -388,14 +426,14 @@ class A1RmaEnv(DirectRLEnv):
 
     def _apply_action(self):
         self._apply_pd()
-        # RaiSim external forces only act for one integration step
+        # RaiSim setExternalForce: world frame, acts for one integration step. The instantaneous
+        # wrench composer is cleared by Isaac Lab after every physics step.
         if self._substep == 0 and self.push_pending.any():
-            self.robot.set_external_force_and_torque(self.push_force, torch.zeros_like(self.push_force),
-                                                     body_ids=[self._base_id])
-        elif self._substep == 1 and self.push_pending.any():
+            self.robot.instantaneous_wrench_composer.set_forces_and_torques(
+                forces=self.push_force, torques=torch.zeros_like(self.push_force),
+                body_ids=self._base_id_t, is_global=True)
             self.push_force.zero_()
             self.push_pending.zero_()
-            self.robot.set_external_force_and_torque(self.push_force, self.push_force.clone(), body_ids=[self._base_id])
         self._substep += 1
 
     def _get_dones(self):

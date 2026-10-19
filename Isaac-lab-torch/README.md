@@ -105,7 +105,7 @@ printed in the log (`time elapsed in this iteration`). Multiply it out to estima
    the RaiSim A1 URDF (both come from Unitree's URDF). *Medium confidence. Check the standing pose first.*
 7. **Alive bonus**: `Environment.hpp` reads `cfg["aliveBonus"]`, which is missing from `cfg.yaml`, so RaiSim
    ran with 0. This is kept. Add `aliveBonus: 18` to the yaml to turn it on.
-8. Push forces are applied in the base frame (RaiSim: world frame). Their direction is random, so the effect is minor.
+8. Friction / mass / COM changes reach PhysX in batches every 10 control steps (0.1 s), not instantly.
 
 ## Not ported yet
 
