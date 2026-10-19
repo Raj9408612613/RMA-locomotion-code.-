@@ -11,16 +11,55 @@ modules, `RaisimGymVecEnv` normalisation and the `Base-policy/` checkpoints are 
 | `isaac_wrapper.py` | compiled pybind module `rsg_a1_task.RaisimGymEnv` |
 | `runner.py`, `cfg.yaml` | `rsg_a1_task/runner.py`, `cfg.yaml` |
 
-## Run
+## Run on EC2 (same stack as nv-omni-tr-pipeline: Isaac Lab v2.3.2, Isaac Sim 5.1, conda env `isaac`)
 
 ```bash
-# inside an Isaac Lab install (2.x, isaaclab + isaaclab_assets packages)
-./isaaclab.sh -p -m pip install ruamel.yaml trimesh wandb
-./isaaclab.sh -p /path/to/Isaac-lab-torch/runner.py --exptid 1 --headless --num_envs 4096
-python Isaac-lab-torch/tests/test_terrain.py   # terrain unit test, needs only numpy + torch
+# 1. one-time setup (reboots once for the driver, then re-run)
+git clone https://github.com/Raj9408612613/nv-omni-tr-pipeline ~/nv-omni-tr-pipeline
+bash ~/nv-omni-tr-pipeline/scripts/isaac_run.sh
+conda activate isaac
+git clone -b claude/blissful-edison-alxpwz https://github.com/Raj9408612613/RMA-locomotion-code.- ~/rma
+cd ~/rma
+pip install ruamel.yaml trimesh "imageio[ffmpeg]"
+
+# 2. CPU test (seconds)
+python Isaac-lab-torch/tests/test_terrain.py
+
+# 3. smoke test: 64 envs, stop with Ctrl-C after 2-3 iterations
+python Isaac-lab-torch/runner.py --exptid 0 --num_envs 64 --headless --overwrite
+#    check: "[settle] base height above terrain" ~0.25-0.33 m, rewards finite, dones well below 1.0
+
+# 4. video of the starting policy (checkpoint 0 is written by the smoke test)
+python Isaac-lab-torch/record_video.py --run_dir Isaac-lab-torch/data/rsg_a1_task/0000 --iter 0 --headless
+#    -> Isaac-lab-torch/data/rsg_a1_task/0000/video_0.mp4  (copy with scp)
+
+# 5. full training (in tmux; log the output)
+python Isaac-lab-torch/runner.py --exptid 1 --num_envs 1024 --headless 2>&1 | tee train_1.log
+
+# 6. video of a checkpoint (one is written every eval_every_n = 2000 iterations)
+python Isaac-lab-torch/record_video.py --run_dir Isaac-lab-torch/data/rsg_a1_task/0001 --iter 10000 --headless
 ```
 
-Leave out `--headless` to watch training in the Isaac Sim GUI. Logs go to `Isaac-lab-torch/data/`.
+`record_video.py` uses `omni_spot/video_recorder.py` from nv-omni-tr-pipeline (`--pipeline_dir`,
+default `~/nv-omni-tr-pipeline`). It films env 0 with a chase camera (`viewer` in `A1RmaEnvCfg`).
+The video is 100 fps (one frame per control step), so it plays in real time.
+
+### How many iterations
+
+The curriculum is counted in **iterations**, not samples. More envs means more data per iteration,
+but the schedule stays the same:
+
+| iteration | what happens |
+|---|---|
+| 0 | starts from the base policy in `Base-policy/`; checkpoint 0 is saved |
+| 1200 | stairs appear (60% of terrains), lowest step height 0.10 m |
+| 1200 + 1000·k | one more step-height level unlocked |
+| 8200 | all levels unlocked (up to 0.23 m) |
+
+Run to **10 000 iterations** first. That is the first checkpoint after the full curriculum. Make a video,
+then continue (`--loadid 10000`) to about 20 000 if rewards and `dones` are still improving. The base
+policy is named `_22000`, which suggests the original runs were about that long. Time per iteration is
+printed in the log (`time elapsed in this iteration`). Multiply it out to estimate the total.
 
 ## Kept the same as RaiSim
 

@@ -17,7 +17,7 @@ import torch
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import IdealPDActuatorCfg
 from isaaclab.assets import Articulation, ArticulationCfg
-from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
+from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg, ViewerCfg
 from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensor, ContactSensorCfg
 from isaaclab.sim import SimulationCfg
@@ -47,6 +47,9 @@ class A1RmaEnvCfg(DirectRLEnvCfg):
     action_space = 12
     observation_space = 140
     state_space = 0
+    # chase camera on env 0, used by env.render() for videos (needs --enable_cameras)
+    viewer: ViewerCfg = ViewerCfg(eye=(1.5, -1.5, 0.8), lookat=(0.0, 0.0, 0.0), origin_type="asset_root",
+                                  asset_name="robot", env_index=0, resolution=(1280, 720))
     scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=200, env_spacing=2.0, replicate_physics=True)
 
     robot: ArticulationCfg = UNITREE_A1_CFG.replace(
@@ -345,10 +348,18 @@ class A1RmaEnv(DirectRLEnv):
         self.update_state(all_ids, force_slope=True)
         self.prev_xy[:] = self.robot.data.root_pos_w[:, :2]
         self.obs_buf = self._get_observations()
+        # sanity check: A1 in the default pose stands ~0.3 m above the ground
+        base_h = self.robot.data.root_pos_w[:, 2] - self.terrain.heights_at(self.robot.data.root_pos_w[:, :2])
+        print(f"[settle] base height above terrain: mean {base_h.mean().item():.3f} m, "
+              f"min {base_h.min().item():.3f} m (expect ~0.25-0.33 on flat ground)")
 
     def curriculum_update(self):
         self.cost_coeff = self.cost_coeff ** self.cost_decay_fac
         self.itr_number += 1
+
+    def render(self, recompute: bool = False, mode: str | None = None):
+        # `mode` lets nv-omni-tr-pipeline's video_recorder call env.render(mode="rgb_array")
+        return super().render(recompute=recompute)
 
     # ------------------------------------------------------- DirectRLEnv API
     def _pre_physics_step(self, actions: torch.Tensor):
