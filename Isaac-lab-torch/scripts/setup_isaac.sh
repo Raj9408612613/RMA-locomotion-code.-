@@ -223,6 +223,10 @@ fi
 # install. Every check below gates on the *pinned version*, not on importability.
 echo ">>> Stage 4: Isaac Sim $ISAACSIM_VERSION + Isaac Lab $ISAACLAB_TAG"
 
+same_version() {   # $1 $2 -> success if numerically equal (5.1.0.0 == 5.1.0)
+    python -c "import sys; from packaging.version import Version as V; sys.exit(0 if V('$1') == V('$2') else 1)" 2>/dev/null
+}
+
 dist_version() {   # $1 = distribution name -> version string, or "none"
     python -c "import importlib.metadata as m; print(m.version('$1'))" 2>/dev/null || echo none
 }
@@ -231,7 +235,7 @@ dist_version() {   # $1 = distribution name -> version string, or "none"
 #    Isaac Lab's docs install; it supersedes the old split isaacsim-rl/
 #    isaacsim-replicator/... list. Reinstall when missing OR wrong version.
 have_sim="$(dist_version isaacsim)"
-if [ "$have_sim" = "$ISAACSIM_VERSION" ]; then
+if same_version "$have_sim" "$ISAACSIM_VERSION"; then
     echo "    isaacsim $ISAACSIM_VERSION already installed"
 else
     echo "    isaacsim=$have_sim -> installing $ISAACSIM_VERSION ..."
@@ -266,7 +270,7 @@ LAB_VER="${ISAACLAB_TAG#v}"            # v2.3.2 -> 2.3.2 (matches pip metadata)
 #    (cheap no-ops when satisfied) so a half-installed env self-heals.
 ensure_ext() {     # $1 = dist name, $2 = source subdir, $3.. = extra pip flags
     local name="$1" dir="$2"; shift 2
-    if [ "$(dist_version "$name")" = "$LAB_VER" ] && python -c "import $name" 2>/dev/null; then
+    if same_version "$(dist_version "$name")" "$LAB_VER" && python -c "import $name" 2>/dev/null; then
         echo "    $name $LAB_VER already installed"
     else
         echo "    installing $name ($LAB_VER) ..."
@@ -292,10 +296,11 @@ ensure_torch
 echo "    verify:"
 python - <<PY || { echo "      VERIFY FAILED — aborting (see log: $LOG_FILE)"; exit 1; }
 import importlib.metadata as m, torch
+from packaging.version import Version as V
 from isaaclab.app import AppLauncher   # exact import path train.py takes
 sim, lab = m.version("isaacsim"), m.version("isaaclab")
-assert sim == "$ISAACSIM_VERSION", f"isaacsim {sim} != $ISAACSIM_VERSION"
-assert lab == "$LAB_VER",          f"isaaclab {lab} != $LAB_VER"
+assert V(sim) == V("$ISAACSIM_VERSION"), f"isaacsim {sim} != $ISAACSIM_VERSION"
+assert V(lab) == V("$LAB_VER"), f"isaaclab {lab} != $LAB_VER"
 assert torch.__version__.startswith("$TORCH_VERSION"), f"torch {torch.__version__}"
 print(f"      isaacsim {sim} | isaaclab {lab} | torch {torch.__version__} | cuda={torch.cuda.is_available()}")
 PY
