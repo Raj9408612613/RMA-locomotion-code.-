@@ -66,6 +66,23 @@ PIPELINE_DIR="$HOME/nv-omni-tr-pipeline"   # provides omni_spot/video_recorder.p
 RUN_TRAINING=false
 [[ "${1:-}" == "--train" ]] && RUN_TRAINING=true
 
+# ── NVIDIA Omniverse EULA ────────────────────────────────────────────────────
+# Isaac Sim asks "Do you accept the EULA?" on its first import. The verify step and
+# all smoke/training runs feed python from heredocs or run unattended, so that prompt
+# reads EOF and aborts ("Unable to bootstrap inner kit kernel: EOF when reading a line").
+# Ask once here, on the real terminal, and pass the answer via OMNI_KIT_ACCEPT_EULA.
+if [ "${OMNI_KIT_ACCEPT_EULA:-}" != "YES" ]; then
+    echo "Isaac Sim requires accepting the NVIDIA Omniverse License Agreement:"
+    echo "  https://docs.omniverse.nvidia.com/platform/latest/common/NVIDIA_Omniverse_License_Agreement.html"
+    read -r -p "Do you accept the EULA? (Yes/No): " _eula < /dev/tty
+    case "$_eula" in
+        [Yy]|[Yy][Ee][Ss]) export OMNI_KIT_ACCEPT_EULA=YES
+            grep -q "OMNI_KIT_ACCEPT_EULA" "$HOME/.bashrc" 2>/dev/null \
+                || echo 'export OMNI_KIT_ACCEPT_EULA=YES' >> "$HOME/.bashrc" ;;
+        *) echo "EULA not accepted — Isaac Sim cannot run. Exiting."; exit 1 ;;
+    esac
+fi
+
 exec > >(tee -a "$LOG_FILE") 2>&1
 echo "=== setup_isaac.sh started $(date) | repo=$REPO_DIR | env=$ENV_NAME ==="
 echo "=== target: IsaacLab $ISAACLAB_TAG | IsaacSim $ISAACSIM_VERSION | py$PY_VERSION | torch $TORCH_VERSION+$TORCH_CUDA ==="

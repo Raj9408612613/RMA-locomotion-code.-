@@ -14,6 +14,11 @@ PIPELINE_DIR="${PIPELINE_DIR:-$HOME/nv-omni-tr-pipeline}"
 RUN_DIR="$PORT_DIR/data/rsg_a1_task/9000"
 LOG="/tmp/rma_smoke_train.log"
 FAIL=0
+if [ "${OMNI_KIT_ACCEPT_EULA:-}" != "YES" ]; then
+    echo "[FAIL] OMNI_KIT_ACCEPT_EULA is not set; Isaac Sim would abort at its EULA prompt."
+    echo "       If you accept the NVIDIA Omniverse EULA: export OMNI_KIT_ACCEPT_EULA=YES  (or re-run setup_isaac.sh)"
+    exit 1
+fi
 pass() { echo "[PASS] $*"; }
 fail() { echo "[FAIL] $*"; FAIL=1; }
 
