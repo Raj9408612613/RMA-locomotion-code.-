@@ -260,7 +260,14 @@ have_ref="$(git -C "$ISAACLAB_DIR" describe --tags --exact-match 2>/dev/null || 
 [ "$have_ref" = "$ISAACLAB_TAG" ] \
     || { echo "    IsaacLab checkout is '$have_ref', expected $ISAACLAB_TAG — aborting"; exit 1; }
 echo "    IsaacLab at $have_ref"
-LAB_VER="${ISAACLAB_TAG#v}"            # v2.3.2 -> 2.3.2 (matches pip metadata)
+LAB_VER="${ISAACLAB_TAG#v}"            # v2.3.2 -> 2.3.2 (the repo VERSION file, NOT the pip versions)
+# Each Isaac Lab python package has its OWN version (at v2.3.2: isaaclab 0.54.2,
+# isaaclab_assets 0.2.4, isaaclab_tasks 0.11.12). Read it from the checked-out tag.
+ext_version() {    # $1 = source subdir -> version in its config/extension.toml
+    sed -n 's/^version *= *"\(.*\)"/\1/p' "$ISAACLAB_DIR/source/$1/config/extension.toml" | head -1
+}
+[ "$(cat "$ISAACLAB_DIR/VERSION" 2>/dev/null)" = "$LAB_VER" ] \
+    || { echo "    $ISAACLAB_DIR/VERSION != $LAB_VER — aborting"; exit 1; }
 
 # ── Isaac Lab extensions. Each piece is checked and installed INDEPENDENTLY,
 #    and gated on the tag's version (editable installs keep stale metadata
@@ -270,10 +277,11 @@ LAB_VER="${ISAACLAB_TAG#v}"            # v2.3.2 -> 2.3.2 (matches pip metadata)
 #    (cheap no-ops when satisfied) so a half-installed env self-heals.
 ensure_ext() {     # $1 = dist name, $2 = source subdir, $3.. = extra pip flags
     local name="$1" dir="$2"; shift 2
-    if same_version "$(dist_version "$name")" "$LAB_VER" && python -c "import $name" 2>/dev/null; then
-        echo "    $name $LAB_VER already installed"
+    local want; want="$(ext_version "$dir")"
+    if same_version "$(dist_version "$name")" "$want" && python -c "import $name" 2>/dev/null; then
+        echo "    $name $want already installed"
     else
-        echo "    installing $name ($LAB_VER) ..."
+        echo "    installing $name ($want, Isaac Lab $LAB_VER) ..."
         pip install "$@" -e "$ISAACLAB_DIR/source/$dir"
     fi
 }
@@ -299,10 +307,13 @@ import importlib.metadata as m, torch
 from packaging.version import Version as V
 from isaaclab.app import AppLauncher   # exact import path train.py takes
 sim, lab = m.version("isaacsim"), m.version("isaaclab")
+want = {"isaaclab": "$(ext_version isaaclab)", "isaaclab_assets": "$(ext_version isaaclab_assets)",
+        "isaaclab_tasks": "$(ext_version isaaclab_tasks)"}
 assert V(sim) == V("$ISAACSIM_VERSION"), f"isaacsim {sim} != $ISAACSIM_VERSION"
-assert V(lab) == V("$LAB_VER"), f"isaaclab {lab} != $LAB_VER"
+for pkg, v in want.items():
+    assert V(m.version(pkg)) == V(v), f"{pkg} {m.version(pkg)} != {v} (Isaac Lab $LAB_VER)"
 assert torch.__version__.startswith("$TORCH_VERSION"), f"torch {torch.__version__}"
-print(f"      isaacsim {sim} | isaaclab {lab} | torch {torch.__version__} | cuda={torch.cuda.is_available()}")
+print(f"      isaacsim {sim} | Isaac Lab $LAB_VER (isaaclab {lab}) | torch {torch.__version__} | cuda={torch.cuda.is_available()}")
 PY
 
 # =============================================================================
