@@ -207,13 +207,17 @@ class A1RmaEnv(DirectRLEnv):
         self.scene.sensors["contact_sensor"] = self.contact_sensor
 
         self.terrain = TerrainBank(self.cfg.tile_size, self.cfg.horizontal_scale, num_variants=self.cfg.num_variants,
-                                   stairs_noise=not bool(self.cfg.task.get("test", False)),
                                    seed=self.cfg.terrain_seed, device=self.device)
         import trimesh
-        verts, tris = self.terrain.mesh()
-        create_prim_from_mesh("/World/ground", trimesh.Trimesh(vertices=verts, faces=tris, process=False),
-                              visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.45, 0.45, 0.4)),
-                              physics_material=self.cfg.sim.physics_material)
+        from isaaclab.terrains.height_field.utils import convert_height_field_to_mesh
+        tb = self.terrain
+        for name, r0, r1, slope_threshold in tb.mesh_parts():
+            verts, tris = convert_height_field_to_mesh(tb.height_field[r0:r1], tb.hs, tb.vs, slope_threshold)
+            verts[:, 0] += tb.origin[0] + r0 * tb.hs
+            verts[:, 1] += tb.origin[1]
+            create_prim_from_mesh(f"/World/ground/{name}", trimesh.Trimesh(vertices=verts, faces=tris, process=False),
+                                  visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.45, 0.45, 0.4)),
+                                  physics_material=self.cfg.sim.physics_material)
 
         self.scene.clone_environments(copy_from_source=False)
         self.scene.filter_collisions(global_prim_paths=["/World/ground"])

@@ -16,7 +16,6 @@ KIND_ROUGH, KIND_UP, KIND_DOWN = 0, 1, 2
 
 # Same lists as Environment.hpp
 STEP_HEIGHT_LIST = [0.1, 0.13, 0.15, 0.17, 0.19, 0.21, 0.23]
-STEP_LENGTH = 0.6  # step_length_list[rand() % max_step_idx] with max_step_idx = 1
 NUM_DOWN_LEVELS = len(STEP_HEIGHT_LIST) - 3
 
 
@@ -87,39 +86,24 @@ def rough_tile(n, hs, rng):
     return fractal(n, hs, 10.0, 0.22, rng)
 
 
-def stairs_tile(n, hs, step_height, rng, noise_z_scale):
-    """add_stairs: 1.2 m start platform at 0.2 m, 0.6 m steps along +x, a 1.2 m landing
-    from 4.8 m to 6.0 m, then steps continue. Half of the steps get a 2.5 cm chamfer on
-    their first row. Down stairs (step_height < 0) get fractal noise added."""
-    xs = np.arange(n) * hs
-    h = np.full(n, 0.2)
-    plat_end, land0, land1 = 1.2, 4.8, 6.0
-    in_first = (xs >= plat_end) & (xs < land0)
-    k1 = np.floor((xs - plat_end) / STEP_LENGTH)
-    h[in_first] = 0.2 + (k1[in_first] + 1) * step_height
-    n_first = int(round((land0 - plat_end) / STEP_LENGTH))
-    top = 0.2 + n_first * step_height
-    h[(xs >= land0) & (xs < land1)] = top
-    in_second = xs >= land1
-    k2 = np.floor((xs - land1) / STEP_LENGTH)
-    h[in_second] = top + (k2[in_second] + 1) * step_height
-    # chamfer: first sample row of each step, with probability 0.5
-    step_id = np.where(in_first, k1, np.where(in_second, 1000 + k2, -1))
-    first_row = np.zeros(n, bool)
-    first_row[1:] = (step_id[1:] != step_id[:-1]) & (step_id[1:] >= 0)
-    chamfer = {s: rng.uniform(-1, 1) < 0 for s in np.unique(step_id[first_row])}
-    for i in np.nonzero(first_row)[0]:
-        if chamfer[step_id[i]]:
-            h[i] -= 0.025
-    tile = np.repeat(h[:, None], n, axis=1)
-    if noise_z_scale > 0:  # add_stairs: second height map, frequency 20, 200 samples / 12 m
-        tile += fractal(n, hs, 20.0, noise_z_scale, rng)
-    return tile
+def isaaclab_stairs_tile(n, hs, step_height, inverted, step_width=0.3, platform_width=3.0, border_width=1.0):
+    """Height field of Isaac Lab's MeshPyramidStairsTerrain / MeshInvertedPyramidStairsTerrain
+    (isaaclab/terrains/trimesh/mesh_terrains.py, v2.3.2) with ROUGH_TERRAINS_CFG's stair settings:
+    1 m flat border at 0, square rings of `step_width` wide steps, ring k at +-(k+1)*h, centre platform at
+    +-(num_steps+1)*h. Pyramid (centre on top) = walking out goes DOWN; inverted (pit) = walking out goes UP."""
+    size = n * hs
+    num_steps = int((size - 2 * border_width - platform_width) // (2 * step_width) + 1)
+    sign = -1.0 if inverted else 1.0
+    c = np.arange(n) * hs
+    d = np.minimum(np.minimum(c, size - c)[:, None], np.minimum(c, size - c)[None, :])  # distance to tile edge
+    k = np.floor((d - border_width) / step_width + 1e-9)
+    h = np.where(d < border_width, 0.0, np.where(k >= num_steps, num_steps + 1, k + 1) * step_height)
+    return sign * h
 
 
 class TerrainBank:
     def __init__(self, tile_size=8.0, horizontal_scale=0.05, vertical_scale=0.005, num_variants=5,
-                 border=3.0, stairs_noise=True, seed=0, device="cpu"):
+                 border=3.0, seed=0, device="cpu"):
         rng = np.random.default_rng(seed)
         self.hs, self.vs = horizontal_scale, vertical_scale
         n = int(round(tile_size / horizontal_scale))
@@ -138,9 +122,9 @@ class TerrainBank:
                 if kind == KIND_ROUGH:
                     tile = rough_tile(n, horizontal_scale, rng)
                 else:
-                    sh = STEP_HEIGHT_LIST[level] * (1 if kind == KIND_UP else -1)
-                    z = 0.2 if (kind == KIND_DOWN and stairs_noise) else 0.0
-                    tile = stairs_tile(n, horizontal_scale, sh, rng, z)
+                    # UP: start at the bottom of an inverted pyramid; DOWN: start on top of a pyramid
+                    tile = isaaclab_stairs_tile(n, horizontal_scale, STEP_HEIGHT_LIST[level],
+                                                inverted=(kind == KIND_UP))
                 H[b + c * n:b + (c + 1) * n, b + r * n:b + (r + 1) * n] = tile
         self.height_field = np.round(H / vertical_scale).astype(np.int16)
         self.origin = np.array([-(H.shape[0] - 1) * horizontal_scale / 2, -(H.shape[1] - 1) * horizontal_scale / 2])
@@ -157,11 +141,12 @@ class TerrainBank:
         cc, rr = torch.meshgrid(torch.arange(n_cols), torch.arange(num_variants), indexing="ij")
         corners = torch.stack([(b + cc * n) * horizontal_scale, (b + rr * n) * horizontal_scale], -1)
         self.tile_corner = corners.to(device=device, dtype=torch.float32) + self._origin_t
-        # robot spawn offset inside a tile (RaiSim: robot 0.6 m from the stairs map edge,
-        # about 2 m from the rough map edge, laterally centred)
+        # robot spawn offset inside a tile: rough about 2 m from the edge (as RaiSim),
+        # stairs on the centre platform of the Isaac Lab pyramid, facing +x
         self.spawn_local = torch.tensor([[2.0, self.tile_size / 2],
-                                         [0.6, self.tile_size / 2],
-                                         [0.6, self.tile_size / 2]], device=device)
+                                         [self.tile_size / 2, self.tile_size / 2],
+                                         [self.tile_size / 2, self.tile_size / 2]], device=device)
+        self.n_border = b
 
     def spawn_xy(self, kind, level, variant):
         col = self.col_table[kind, level]
@@ -178,6 +163,13 @@ class TerrainBank:
         h = self.heights
         return ((h[x0, y0] * (1 - fx) + h[x0 + 1, y0] * fx) * (1 - fy)
                 + (h[x0, y0 + 1] * (1 - fx) + h[x0 + 1, y0 + 1] * fx) * fy)
+
+    def mesh_parts(self):
+        """(name, first row, last row + 1, slope_threshold) blocks for Isaac Lab's height-field-to-mesh:
+        RaiSim rough terrain stays a plain triangulation, Isaac Lab stairs get vertical risers
+        (slope_threshold 0.75, as in ROUGH_TERRAINS_CFG). Blocks share one boundary row."""
+        split = self.n_border + self.tile_n  # rough column ends here
+        return [("rough", 0, split + 1, None), ("stairs", split, self.height_field.shape[0], 0.75)]
 
     def mesh(self):
         """Vertices / triangles of the height field (two triangles per cell) in world frame."""

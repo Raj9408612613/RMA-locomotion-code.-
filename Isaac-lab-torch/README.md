@@ -101,8 +101,11 @@ printed in the log (`time elapsed in this iteration`). Multiply it out to estima
 
 1. **Terrain is a tile grid, not a fresh height map per env.** Isaac Lab envs share one stage, so
    `terrain.py` pre-builds `num_variants` random variants per (kind, step height) and a terrain change
-   moves the robot to another tile. The resolution is 0.05 m (RaiSim used 0.02 m for stairs), so the
-   2.5 cm stair chamfer is 5 cm wide.
+   moves the robot to another tile (0.05 m resolution).
+   **Stairs are Isaac Lab's**, not RaiSim's: `MeshPyramidStairsTerrain` (down: start on top) and
+   `MeshInvertedPyramidStairsTerrain` (up: start in the pit) with `ROUGH_TERRAINS_CFG` settings (0.3 m steps,
+   3 m platform, 1 m border, vertical risers). RaiSim's straight 0.6 m flight, chamfers and down-stair noise are not
+   used. RMA's step heights (0.10-0.23 m) and curriculum schedule are kept.
 2. **Fractal noise** is a numpy port of `raisim::TerrainGenerator` / `raisim::PerlinNoise` (raisimLib `Terrain.hpp`): same
    per-metre frequency, [0, zScale] height mapping and 200-sample / 12 m grid, resampled to the 0.05 m tile grid.
 3. **Settling**: RaiSim integrates 50 steps after every reset. Here this only happens on the full

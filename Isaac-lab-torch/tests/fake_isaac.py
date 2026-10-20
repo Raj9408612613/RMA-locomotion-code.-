@@ -140,6 +140,9 @@ def install():
     mod("isaaclab.scene", InteractiveSceneCfg=SceneCfg)
     mod("isaaclab.sensors", ContactSensor=Sensor, ContactSensorCfg=Any_)
     mod("isaaclab.terrains"); mod("isaaclab.terrains.utils", create_prim_from_mesh=lambda *a, **k: None)
+    mod("isaaclab.terrains.height_field")
+    mod("isaaclab.terrains.height_field.utils",
+        convert_height_field_to_mesh=lambda hf, hs, vs, thr=None: (np.zeros((hf.size, 3), np.float32), np.zeros((1, 3), np.uint32)))
     mod("isaaclab.utils", configclass=lambda c: c)
     mod("isaaclab_assets"); mod("isaaclab_assets.robots"); mod("isaaclab_assets.robots.unitree", UNITREE_A1_CFG=Any_())
     Any_.func = lambda self, *a: None
