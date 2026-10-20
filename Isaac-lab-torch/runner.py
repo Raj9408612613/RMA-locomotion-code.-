@@ -19,6 +19,7 @@ parser.add_argument("--gpu", type = int, default = 0)
 parser.add_argument("--name", type = str)
 parser.add_argument("--num_envs", type = int, default = None)
 parser.add_argument("--max_iters", type = int, default = 500000, help='last iteration to run (inclusive)')
+parser.add_argument("--save_every", type = int, default = None, help='checkpoint interval (default: eval_every_n in cfg.yaml)')
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 args.device = 'cpu' if args.debug else 'cuda:{}'.format(args.gpu)
@@ -65,6 +66,8 @@ else:
     device_type = 'cuda:{}'.format(args.gpu)
 if args.num_envs is not None:
     cfg['environment']['num_envs'] = args.num_envs
+if args.save_every is not None:
+    cfg['environment']['eval_every_n'] = args.save_every
 
 cfg['environment']['test'] = False
 cfg['environment']['speedTest'] = False
