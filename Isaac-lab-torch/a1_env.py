@@ -177,6 +177,10 @@ class A1RmaEnv(DirectRLEnv):
         self.isDown = torch.zeros(n, dtype=torch.bool, device=d)
         self.canonical_step_height = torch.full((n,), 0.1, device=d)
         self.resample_on_reset = False
+        # fast mode (runner.py --rollout_steps): episodes end at `episode_steps` and get a new command,
+        # as the per-iteration full reset of the RaiSim runner did
+        self.episode_steps = 1200
+        self.resample_on_timeout = False
         # diagnosis hooks (diagnose_policy.py): pin terrain / command per env, read end reasons
         self.fixed_terrain = None   # (kind, level) long tensors of shape (num_envs,), used on every reset
         self.fixed_command = None   # (forward speed m/s, yaw rate rad/s) floats, overrides sample_goals
@@ -406,15 +410,18 @@ class A1RmaEnv(DirectRLEnv):
         base_h = self.robot.data.root_pos_w[:, 2] - self.terrain.heights_at(self.robot.data.root_pos_w[:, :2])
         print(f"[settle] base height above terrain: mean {base_h.mean().item():.3f} m, "
               f"min {base_h.min().item():.3f} m (expect ~0.25-0.33 on flat ground)")
-        if self.term_steps > 0:
-            rate = (self.term_counts / self.term_steps).tolist()
-            print("[term] per-step rate since last reset: illegal_contact {:.5f} | orientation {:.5f} | "
-                  "base_height {:.5f} | yaw {:.5f} | timeout {:.5f}".format(*rate))
-            self.term_counts.zero_()
-            self.term_steps = 0
+        self.report_terminations()
         if self._ctrl_steps > 0:
             print(f"[time] PhysX randomization writes since last reset: {self._phys_time:.2f} s")
             self._phys_time = 0.0
+
+    def report_terminations(self, since="last reset"):
+        if self.term_steps > 0:
+            rate = (self.term_counts / self.term_steps).tolist()
+            print(f"[term] per-step rate since {since}: illegal_contact {{:.5f}} | orientation {{:.5f}} | "
+                  "base_height {:.5f} | yaw {:.5f} | timeout {:.5f}".format(*rate))
+            self.term_counts.zero_()
+            self.term_steps = 0
 
     def curriculum_update(self):
         self.cost_coeff = self.cost_coeff ** self.cost_decay_fac
@@ -552,7 +559,7 @@ class A1RmaEnv(DirectRLEnv):
         too_low = base_h < torch.where(loose, 0.1, 0.24)
         yaw_off = (~self.sampleCmds) & (not self.isEval) & (self.euler[:, 2].abs() > 0.5)
         terminated = illegal | bad_orient | too_low | yaw_off
-        time_out = (self.step_counter > 1200) & ~terminated
+        time_out = (self.step_counter > self.episode_steps) & ~terminated
         reasons = torch.stack([illegal, bad_orient, too_low, yaw_off, time_out], -1)
         self.term_counts += reasons.float().sum(0)
         self.last_term = reasons
@@ -581,6 +588,8 @@ class A1RmaEnv(DirectRLEnv):
         self.step_counter[ids] = 0
         if self.resample_on_reset or self.isTest:
             self.sample_goals(ids)
+        elif self.resample_on_timeout:
+            self.sample_goals(ids[self.reset_time_outs[ids]])
 
         xy = self.terrain.spawn_xy(self.kind[ids], self.level[ids], self.variant[ids])
         root = self.robot.data.default_root_state[ids].clone()

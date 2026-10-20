@@ -15,6 +15,7 @@ class IsaacGymEnvWrapper:
         self.env = env
         self._obs = None
         self._step_time = 0.0
+        self.last_time_out = None
 
     def init(self):
         pass
@@ -46,6 +47,7 @@ class IsaacGymEnvWrapper:
         self._obs = obs["policy"]
         reward[:] = rew.cpu().numpy()
         done[:] = (terminated | time_out).cpu().numpy()
+        self.last_time_out = time_out.cpu().numpy()
         self._step_time += time.perf_counter() - t0
 
     def observe(self, ob):

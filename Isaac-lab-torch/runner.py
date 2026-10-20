@@ -19,6 +19,9 @@ parser.add_argument("--gpu", type = int, default = 0)
 parser.add_argument("--name", type = str)
 parser.add_argument("--num_envs", type = int, default = None)
 parser.add_argument("--max_iters", type = int, default = 500000, help='last iteration to run (inclusive)')
+parser.add_argument("--rollout_steps", type = int, default = None,
+                    help='fast mode: steps per env per iteration (e.g. 30 with 4096 envs). Episodes then run across '
+                         'iterations and end at max_time; default: max_time/control_dt with a full reset every iteration')
 parser.add_argument("--save_every", type = int, default = None, help='checkpoint interval (default: eval_every_n in cfg.yaml)')
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
@@ -83,7 +86,9 @@ env_cfg = A1RmaEnvCfg()
 env_cfg.apply_yaml(cfg['environment'])
 env_cfg.sim.device = device_type
 env_cfg.seed = rng_seed
-env = VecEnv(IsaacGymEnvWrapper(A1RmaEnv(env_cfg)), cfg['environment'])
+isaac_env = A1RmaEnv(env_cfg)
+isaac_wrapper = IsaacGymEnvWrapper(isaac_env)
+env = VecEnv(isaac_wrapper, cfg['environment'])
 
 # shortcuts
 ob_dim = env.num_obs
@@ -108,7 +113,16 @@ if wandb:
     wandb.save(task_path + '/a1_env.py')
 
 # Training
-n_steps = math.floor(cfg['environment']['max_time'] / cfg['environment']['control_dt'])
+episode_steps = math.floor(cfg['environment']['max_time'] / cfg['environment']['control_dt'])
+n_steps = episode_steps if args.rollout_steps is None else args.rollout_steps
+# fast mode: many envs, short rollouts, same samples per iteration as the original (200 x 600).
+# Envs are only fully reset once; episodes end by timeout at max_time (time-out rewards are bootstrapped).
+fast = n_steps < episode_steps
+if fast:
+    isaac_env.episode_steps = episode_steps
+    isaac_env.resample_on_timeout = True
+    print(f"[fast] {env.num_envs} envs x {n_steps} steps = {env.num_envs * n_steps} samples per iteration "
+          f"(original: 200 x {episode_steps} = {200 * episode_steps})")
 total_steps = n_steps * env.num_envs
 
 if cfg['environment']['unnormalize_speed_vec']:
@@ -221,9 +235,14 @@ rl_coeff = 0.3
 ppo.update_rl_coeff(rl_coeff)
 
 
-for update in range(args.max_iters + 1) if args.loadid is None else range(args.loadid + 1, args.max_iters + 1):
+first_update = 0 if args.loadid is None else args.loadid + 1
+for update in range(first_update, args.max_iters + 1):
     start = time.time()
-    env.reset()
+    full_reset = not fast or update == first_update
+    if full_reset:
+        env.reset()
+        if fast:  # spread the episode clocks so the envs do not all time out together
+            isaac_env.step_counter[:] = torch.randint(0, episode_steps, (env.num_envs,), device=isaac_env.device)
     reward_ll_sum = 0
     forwardX_sum = 0
     penalty_sum = 0
@@ -247,7 +266,8 @@ for update in range(args.max_iters + 1) if args.loadid is None else range(args.l
         np.savetxt(saver.data_dir+"/policy_"+str(update)+'.txt', parameters)
         loaded_graph = torch.jit.load(saver.data_dir+"/policy_"+str(update)+'.pt')
 
-        env.reset()
+        if not fast:
+            env.reset()
         env.save_scaling(saver.data_dir, str(update))
 
     # actual training
@@ -258,7 +278,13 @@ for update in range(args.max_iters + 1) if args.loadid is None else range(args.l
         unscaled_reward_info = env.get_reward_info()
         forwardX = unscaled_reward_info[:, 0]
         penalty = unscaled_reward_info[:, 1:]
-        ppo.step(value_obs=obs, rews=reward, dones=dones, infos=[])
+        rews = reward
+        if fast and isaac_wrapper.last_time_out.any():
+            # time-out is not a real terminal state: add gamma * V(s) (as rsl_rl does)
+            to = isaac_wrapper.last_time_out
+            rews = reward.copy()
+            rews[to] += ppo.gamma * critic.predict(torch.from_numpy(obs[to]).to(device_type)).cpu().numpy().ravel()
+        ppo.step(value_obs=obs, rews=rews, dones=dones, infos=[])
         done_sum = done_sum + sum(dones)
         reward_ll_sum = reward_ll_sum + sum(reward)
         forwardX_sum += np.sum(forwardX)
@@ -320,6 +346,8 @@ for update in range(args.max_iters + 1) if args.loadid is None else range(args.l
 
     print('----------------------------------------------------')
     print('{:>6}th iteration'.format(update))
+    if fast and update % 10 == 0:
+        isaac_env.report_terminations(since="10 iterations")
     print('{:<40} {:>6}'.format("average ll reward: ", '{:0.10f}'.format(average_ll_performance)))
     print('{:<40} {:>6}'.format("average forward reward: ", '{:0.10f}'.format(forwardXReward)))
     print('{:<40} {:>6}'.format("average penalty reward: ", ', '.join(['{:0.4f}'.format(r) for r in scaled_penalty])))

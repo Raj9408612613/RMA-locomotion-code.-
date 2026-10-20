@@ -3,13 +3,15 @@
 # train_and_record.sh — train until N_CKPT checkpoints exist, then make an MP4 (and a diagnosis)
 # of each checkpoint, plus checkpoint 0 (the starting base policy) for comparison.
 #
-# Default: 1024 envs, checkpoints at 2000, 4000, 6000. Run it inside tmux:
+# Default (fast mode): 4096 envs x 30 steps per iteration (same samples per iteration as the original
+# 200 x 600), checkpoints at 2000, 4000, 6000. Run it inside tmux:
 #   tmux new -s train
 #   bash ~/rma/Isaac-lab-torch/scripts/train_and_record.sh
 #   (detach: Ctrl-b d, re-attach: tmux attach -t train)
 #
 # Settings (environment variables):
-#   EXPTID=1 NUM_ENVS=1024 SAVE_EVERY=2000 N_CKPT=3 DIAGNOSE=1
+#   EXPTID=1 NUM_ENVS=4096 ROLLOUT_STEPS=30 SAVE_EVERY=2000 N_CKPT=3 DIAGNOSE=1
+#   original RaiSim-style iterations (full reset every iteration): NUM_ENVS=200 ROLLOUT_STEPS=600
 # If the run stops (crash, instance stop), run the same command again: it resumes from the
 # newest full_<iter>.pt in the run directory (work after that checkpoint is lost).
 # =============================================================================
@@ -18,7 +20,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT_DIR="$(dirname "$SCRIPT_DIR")"
 PIPELINE_DIR="${PIPELINE_DIR:-$HOME/nv-omni-tr-pipeline}"
 EXPTID="${EXPTID:-1}"
-NUM_ENVS="${NUM_ENVS:-1024}"
+NUM_ENVS="${NUM_ENVS:-4096}"
+ROLLOUT_STEPS="${ROLLOUT_STEPS:-30}"
 SAVE_EVERY="${SAVE_EVERY:-2000}"
 N_CKPT="${N_CKPT:-3}"
 DIAGNOSE="${DIAGNOSE:-1}"
@@ -45,10 +48,10 @@ else
         [ -d "$RUN_DIR" ] && echo ">>> $RUN_DIR exists without a trained checkpoint, overwriting"
         resume=(--overwrite)
     fi
-    echo ">>> training to iteration $MAX_ITERS with $NUM_ENVS envs, checkpoint every $SAVE_EVERY"
+    echo ">>> training to iteration $MAX_ITERS with $NUM_ENVS envs x $ROLLOUT_STEPS steps, checkpoint every $SAVE_EVERY"
     echo ">>> log: $LOG_DIR/train_$EXPTID.log  (time per iteration: grep 'time elapsed' in it)"
     python -u "$PORT_DIR/runner.py" --exptid "$EXPTID" --num_envs "$NUM_ENVS" --max_iters "$MAX_ITERS" \
-        --save_every "$SAVE_EVERY" --headless "${resume[@]}" 2>&1 | tee -a "$LOG_DIR/train_$EXPTID.log"
+        --rollout_steps "$ROLLOUT_STEPS" --save_every "$SAVE_EVERY" --headless "${resume[@]}" 2>&1 | tee -a "$LOG_DIR/train_$EXPTID.log"
 fi
 
 # ------------------------------------------------------------------ 2. videos + diagnosis
