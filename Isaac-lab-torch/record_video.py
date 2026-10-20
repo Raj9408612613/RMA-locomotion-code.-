@@ -29,7 +29,6 @@ args = parser.parse_args()
 args.enable_cameras = True
 simulation_app = AppLauncher(args).app
 
-import numpy as np
 import torch
 from ruamel.yaml import YAML
 
@@ -37,22 +36,7 @@ task_path = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, args.pipeline_dir)
 from omni_spot.video_recorder import record_episodes  # noqa: E402
 from a1_env import A1RmaEnv, A1RmaEnvCfg  # noqa: E402
-
-
-class SavedPolicy:
-    """Gives a runner.py checkpoint the `trainer` interface record_episodes expects."""
-
-    def __init__(self, run_dir, itr, device):
-        self.net = torch.jit.load(os.path.join(run_dir, f"policy_{itr}.pt"), map_location=device)
-        mean = np.loadtxt(os.path.join(run_dir, f"mean{itr}.csv"), dtype=np.float32)
-        var = np.loadtxt(os.path.join(run_dir, f"var{itr}.csv"), dtype=np.float32)
-        self.mean = torch.tensor(np.atleast_2d(mean)[0], device=device)
-        self.std = torch.tensor(np.sqrt(np.atleast_2d(var)[0] + 1e-8), device=device)
-
-    def sample_action(self, obs):
-        x = obs["policy"] if isinstance(obs, dict) else obs
-        x = ((x - self.mean) / self.std).clamp(-10.0, 10.0)  # same as RaisimGymVecEnv
-        return self.net(x), None, None
+from policy_utils import SavedPolicy  # noqa: E402
 
 
 cfg = YAML().load(open(os.path.join(args.run_dir, "cfg.yaml")))

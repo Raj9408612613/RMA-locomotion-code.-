@@ -56,6 +56,14 @@ The networks, PPO and base policy are RMA's own (`Raisim-gym-torch/algo`, `Base-
    python Isaac-lab-torch/record_video.py --run_dir Isaac-lab-torch/data/rsg_a1_task/0001 --iter 10000 --headless
    ```
 
+8. **Diagnose** a checkpoint per terrain (success rate, why episodes end, command tracking, energy, smoothness,
+   foot impact/slip, height, tilt). Run it on `--iter 0` once for the baseline, then on each new checkpoint:
+   ```bash
+   python Isaac-lab-torch/diagnose_policy.py --run_dir Isaac-lab-torch/data/rsg_a1_task/0001 --iter 2000 --headless
+   # options: --command random (RaiSim command sampling)  --rules eval (evaluate_policy.py termination)  --no_dr
+   ```
+   Writes `diagnosis_<iter>/episodes.csv` and `summary.csv` into the run directory.
+
 `record_video.py` uses `omni_spot/video_recorder.py` from nv-omni-tr-pipeline (`--pipeline_dir`,
 default `~/nv-omni-tr-pipeline`). It films env 0 with a chase camera (`viewer` in `A1RmaEnvCfg`).
 The video is 100 fps (one frame per control step), so it plays in real time.
@@ -109,4 +117,4 @@ printed in the log (`time elapsed in this iteration`). Multiply it out to estima
 
 ## Not ported yet
 
-The DAgger student env (`dagger_a1`, 50-step observation history), `evaluate_policy.py` and `viz_policy.py`.
+The DAgger student env (`dagger_a1`, 50-step observation history) and `viz_policy.py`. `diagnose_policy.py` covers `evaluate_policy.py`'s metrics.

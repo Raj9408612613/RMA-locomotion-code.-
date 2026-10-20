@@ -121,6 +121,9 @@ class FakeWorld:
         d.joint_vel += acc * dt; d.joint_pos += d.joint_vel * dt
         xy = d.root_pos_w[:, :2]; ground = e.terrain.heights_at(xy)
         d.root_pos_w[:, 2] += (ground + 0.3 - d.root_pos_w[:, 2]) * 0.2
+        c.t = getattr(c, "t", 0) + 1
+        if __import__("os").environ.get("FAKE_FALLS") and c.t > 400:  # test hook: every 3rd env collapses
+            d.root_pos_w[::3, 2] = ground[::3] + 0.05
         d.root_lin_vel_b = torch.randn(c.n, 3) * 0.05 + torch.tensor([0.3, 0, 0])
         d.root_pos_w[:, 0] += 0.3 * dt
         d.body_pos_w = d.root_pos_w[:, None, :] + torch.randn(c.n, B, 3) * 0.05

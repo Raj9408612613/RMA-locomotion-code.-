@@ -177,6 +177,11 @@ class A1RmaEnv(DirectRLEnv):
         self.isDown = torch.zeros(n, dtype=torch.bool, device=d)
         self.canonical_step_height = torch.full((n,), 0.1, device=d)
         self.resample_on_reset = False
+        # diagnosis hooks (diagnose_policy.py): pin terrain / command per env, read end reasons
+        self.fixed_terrain = None   # (kind, level) long tensors of shape (num_envs,), used on every reset
+        self.fixed_command = None   # (forward speed m/s, yaw rate rad/s) floats, overrides sample_goals
+        self.last_term = torch.zeros(n, 5, dtype=torch.bool, device=d)
+        self.diag_state = z(8)      # vx, vy, wz, cmd_vx, cmd_wz, base height, |roll|, |pitch| (pre-reset)
         self._base_id_t = torch.tensor([self._base_id], dtype=torch.int32, device=d)
         self._phys_pending = torch.zeros(n, dtype=torch.bool, device=d)
         self._pend_friction = self.friction.clone()
@@ -251,6 +256,11 @@ class A1RmaEnv(DirectRLEnv):
         das = torch.where(sample, das, 0.2 * self._rand(m))
         self.max_speed[ids] = 0.5 + dms
         self.ang_speed[ids] = das
+        if self.fixed_command is not None:
+            dms = torch.full((m,), self.fixed_command[0] - 0.5, device=self.device)
+            das = torch.full((m,), float(self.fixed_command[1]), device=self.device)
+            self.max_speed[ids] = 0.5 + dms
+            self.ang_speed[ids] = das
         self.speed_vec[ids] = torch.stack([dms, das, dms, das], -1)
         if self.isTest:
             print(f"speed_vec: {(dms + 0.5).tolist()}, {das.tolist()}")
@@ -324,8 +334,14 @@ class A1RmaEnv(DirectRLEnv):
         lvl_down = torch.randint(0, max_down, (m,), device=d)
         kind = torch.where(stairs, torch.where(down, KIND_DOWN, KIND_UP), KIND_ROUGH)
         level = torch.where(kind == KIND_DOWN, lvl_down, torch.where(kind == KIND_UP, lvl_up, 0))
+        self.apply_terrain(ids, kind, level)
+
+    def apply_terrain(self, ids, kind, level):
+        """Put envs `ids` on a random variant tile of terrain (kind, level) and set the flags."""
+        d = self.device
+        stairs = kind != KIND_ROUGH
         self.kind[ids], self.level[ids] = kind, level
-        self.variant[ids] = torch.randint(0, self.cfg.num_variants, (m,), device=d)
+        self.variant[ids] = torch.randint(0, self.cfg.num_variants, (len(ids),), device=d)
         self.isSlope[ids] = stairs
         self.sampleCmds[ids] = ~stairs
         self.useRef[ids] = kind != KIND_DOWN
@@ -533,7 +549,11 @@ class A1RmaEnv(DirectRLEnv):
         yaw_off = (~self.sampleCmds) & (not self.isEval) & (self.euler[:, 2].abs() > 0.5)
         terminated = illegal | bad_orient | too_low | yaw_off
         time_out = (self.step_counter > 1200) & ~terminated
-        self.term_counts += torch.stack([illegal, bad_orient, too_low, yaw_off, time_out]).float().sum(-1)
+        reasons = torch.stack([illegal, bad_orient, too_low, yaw_off, time_out], -1)
+        self.term_counts += reasons.float().sum(0)
+        self.last_term = reasons
+        self.diag_state = torch.stack([vx, vy, wz, self.max_speed, self.ang_speed, base_h,
+                                       self.euler[:, 0].abs(), self.euler[:, 1].abs()], -1)
         self.term_steps += n
         return terminated, time_out
 
@@ -548,7 +568,9 @@ class A1RmaEnv(DirectRLEnv):
         ids = env_ids.to(self.device)
         m = len(ids)
         change_freq = 50 if self.itr_number > self.start_itr_stairs else 100
-        if self.itr_number % change_freq == 0 or self.isTest:
+        if self.fixed_terrain is not None:
+            self.apply_terrain(ids, self.fixed_terrain[0][ids], self.fixed_terrain[1][ids])
+        elif self.itr_number % change_freq == 0 or self.isTest:
             self.select_terrain(ids)
         self.randomize_sim_params(ids)
         self.avg_xy[ids], self.avg_yaw[ids] = 0.0, 0.0
