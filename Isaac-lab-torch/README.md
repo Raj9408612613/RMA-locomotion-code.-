@@ -103,8 +103,8 @@ printed in the log (`time elapsed in this iteration`). Multiply it out to estima
    `terrain.py` pre-builds `num_variants` random variants per (kind, step height) and a terrain change
    moves the robot to another tile. The resolution is 0.05 m (RaiSim used 0.02 m for stairs), so the
    2.5 cm stair chamfer is 5 cm wide.
-2. **Fractal noise is re-implemented** (Perlin, same frequency, octaves, gain and zScale). RaiSim's
-   generator amplitude convention is undocumented, so rough-terrain roughness may differ. *Low confidence on exact match.*
+2. **Fractal noise** is a numpy port of `raisim::TerrainGenerator` / `raisim::PerlinNoise` (raisimLib `Terrain.hpp`): same
+   per-metre frequency, [0, zScale] height mapping and 200-sample / 12 m grid, resampled to the 0.05 m tile grid.
 3. **Settling**: RaiSim integrates 50 steps after every reset. Here this only happens on the full
    reset at the start of each PPO iteration. Envs that auto-reset mid-iteration start falling from 0.4 m.
 4. **Torque limit** of 33.5 Nm is enforced (A1 spec). It is unclear whether RaiSim clipped torque.

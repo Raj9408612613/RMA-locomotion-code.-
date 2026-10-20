@@ -20,44 +20,70 @@ STEP_LENGTH = 0.6  # step_length_list[rand() % max_step_idx] with max_step_idx =
 NUM_DOWN_LEVELS = len(STEP_HEIGHT_LIST) - 3
 
 
-def perlin(xs, ys, rng):
-    """2D gradient noise evaluated at continuous lattice coordinates xs (nx,), ys (ny,)."""
-    gx, gy = int(np.floor(xs.max())) + 2, int(np.floor(ys.max())) + 2
-    angles = rng.uniform(0, 2 * np.pi, (gx, gy))
-    grads = np.stack([np.cos(angles), np.sin(angles)], -1)
-    X, Y = np.meshgrid(xs, ys, indexing="ij")
-    x0, y0 = np.floor(X).astype(int), np.floor(Y).astype(int)
-    fx, fy = X - x0, Y - y0
+class RaisimPerlin:
+    """raisim::PerlinNoise (raisimLib include/raisim/Terrain.hpp): Ken Perlin's improved noise with a
+    seeded permutation table, sampled at z = 0 as raisim::TerrainGenerator does."""
 
-    def dot(ix, iy, dx, dy):
-        g = grads[ix, iy]
-        return g[..., 0] * dx + g[..., 1] * dy
+    def __init__(self, rng):
+        p = rng.permutation(256)
+        self.p = np.concatenate([p, p])
 
-    n00 = dot(x0, y0, fx, fy)
-    n10 = dot(x0 + 1, y0, fx - 1, fy)
-    n01 = dot(x0, y0 + 1, fx, fy - 1)
-    n11 = dot(x0 + 1, y0 + 1, fx - 1, fy - 1)
-    u = fx * fx * fx * (fx * (fx * 6 - 15) + 10)
-    v = fy * fy * fy * (fy * (fy * 6 - 15) + 10)
-    return (n00 * (1 - u) + n10 * u) * (1 - v) + (n01 * (1 - u) + n11 * u) * v
+    @staticmethod
+    def _fade(t):
+        return t * t * t * (t * (t * 6 - 15) + 10)
+
+    @staticmethod
+    def _grad(h, x, y, z):
+        h = h & 15
+        u = np.where(h < 8, x, y)
+        v = np.where(h < 4, y, np.where((h == 12) | (h == 14), x, z))
+        return np.where(h & 1, -u, u) + np.where(h & 2, -v, v)
+
+    def sample(self, x, y):
+        p, z = self.p, 0.0
+        X, Y = np.floor(x).astype(int) & 255, np.floor(y).astype(int) & 255
+        x, y = x - np.floor(x), y - np.floor(y)
+        u, v, w = self._fade(x), self._fade(y), self._fade(z)
+        A, B = p[X] + Y, p[X + 1] + Y
+        AA, AB, BA, BB = p[A], p[A + 1], p[B], p[B + 1]
+        g = self._grad
+        lerp = lambda t, a, b: a + t * (b - a)
+        return lerp(w, lerp(v, lerp(u, g(p[AA], x, y, z), g(p[BA], x - 1, y, z)),
+                            lerp(u, g(p[AB], x, y - 1, z), g(p[BB], x - 1, y - 1, z))),
+                    lerp(v, lerp(u, g(p[AA + 1], x, y, z - 1), g(p[BA + 1], x - 1, y, z - 1)),
+                         lerp(u, g(p[AB + 1], x, y - 1, z - 1), g(p[BB + 1], x - 1, y - 1, z - 1))))
 
 
-def fractal(n, hs, frequency, z_scale, rng, octaves=2, lacunarity=2.0, gain=0.25, ref_size=12.0):
-    """Fractal noise tile of n x n samples. `frequency` is periods per `ref_size` metres
-    (RaiSim TerrainProperties used 12 m maps). Amplitude semantics of RaiSim's generator are
-    not documented; here z_scale multiplies Perlin noise whose range is roughly [-0.7, 0.7]."""
-    coords = np.arange(n) * hs
-    out = np.zeros((n, n))
-    amp, freq = 1.0, frequency / ref_size
-    for _ in range(octaves):
-        out += amp * perlin(coords * freq, coords * freq, rng)
+def fractal(n, hs, frequency, z_scale, rng, octaves=2, lacunarity=2.0, gain=0.25,
+            map_size=12.0, map_samples=200):
+    """raisim::TerrainGenerator::generatePerlinFractalTerrain for a map of `map_samples` points over
+    `map_size` metres (as in Environment.hpp), resampled onto an n x n tile with spacing `hs`.
+      - noise coordinate of sample i: frequency * map_size / map_samples * i   (frequency is per metre)
+      - height = zScale * (sum_o gain^o * perlin(lacunarity^o * coord) * fractalBound * 0.5 + 0.5)
+        with fractalBound = 1 / sum_o gain^o, i.e. heights lie in [0, zScale]
+      - a RaiSim height map interpolates linearly between samples spaced map_size / (map_samples - 1)."""
+    perlin = RaisimPerlin(rng)
+    spacing = map_size / (map_samples - 1)
+    m = int(np.ceil((n - 1) * hs / spacing)) + 2
+    idx = np.arange(m) * (frequency * map_size / map_samples)
+    X, Y = np.meshgrid(idx, idx, indexing="ij")
+    total, amp, bound = perlin.sample(X, Y), 1.0, 1.0
+    for _ in range(1, octaves):
+        X, Y = X * lacunarity, Y * lacunarity
         amp *= gain
-        freq *= lacunarity
-    return z_scale * out
+        bound += amp
+        total = total + perlin.sample(X, Y) * amp
+    grid = z_scale * (total / bound * 0.5 + 0.5)
+    # bilinear resample of the sample grid onto the tile grid
+    q = np.arange(n) * hs / spacing
+    i0 = np.minimum(np.floor(q).astype(int), m - 2)
+    f = q - i0
+    rows = grid[i0] * (1 - f)[:, None] + grid[i0 + 1] * f[:, None]
+    return rows[:, i0] * (1 - f)[None, :] + rows[:, i0 + 1] * f[None, :]
 
 
 def rough_tile(n, hs, rng):
-    # add_random_terrain: frequency 10, zScale 0.22, octaves 2, lacunarity 2, gain 0.25
+    # add_random_terrain: frequency 10, zScale 0.22, octaves 2, lacunarity 2, gain 0.25, 200 samples / 12 m
     return fractal(n, hs, 10.0, 0.22, rng)
 
 
@@ -86,7 +112,7 @@ def stairs_tile(n, hs, step_height, rng, noise_z_scale):
         if chamfer[step_id[i]]:
             h[i] -= 0.025
     tile = np.repeat(h[:, None], n, axis=1)
-    if noise_z_scale > 0:
+    if noise_z_scale > 0:  # add_stairs: second height map, frequency 20, 200 samples / 12 m
         tile += fractal(n, hs, 20.0, noise_z_scale, rng)
     return tile
 
