@@ -205,6 +205,11 @@ if wandb:
     wandb.watch(actor.architecture.architecture, log_freq=100)
     wandb.watch(critic.architecture.architecture, log_freq=100)
 
+# names of the reward_info columns 1..15 (lateralVel/angularVel are always 0: RaiSim leaves them empty);
+# the last three are raw values (scale 1), not penalties
+penalty_names = ['lateralVel', 'angularVel', 'deltaTorque', 'action', 'sideways', 'jointSpeed', 'deltaContact',
+                 'deltaRelease', 'footSlip', 'upward', 'work', 'yAcc', 'torqueSquare(raw)', 'stepHeight(m)',
+                 'walkedDist(m/step)']
 penalty_scale = np.array([cfg['environment']['lateralVelRewardCoeff'], cfg['environment']['angularVelRewardCoeff'], cfg['environment']['deltaTorqueRewardCoeff'], cfg['environment']['actionRewardCoeff'], cfg['environment']['sidewaysRewardCoeff'], cfg['environment']['jointSpeedRewardCoeff'], cfg['environment']['deltaContactRewardCoeff'], cfg['environment']['deltaReleaseRewardCoeff'], cfg['environment']['footSlipRewardCoeff'], cfg['environment']['upwardRewardCoeff'], cfg['environment']['workRewardCoeff'], cfg['environment']['yAccRewardCoeff'], 1., 1., 1.])
 
 if args.loadid is not None:
@@ -350,7 +355,8 @@ for update in range(first_update, args.max_iters + 1):
         isaac_env.report_terminations(since="10 iterations")
     print('{:<40} {:>6}'.format("average ll reward: ", '{:0.10f}'.format(average_ll_performance)))
     print('{:<40} {:>6}'.format("average forward reward: ", '{:0.10f}'.format(forwardXReward)))
-    print('{:<40} {:>6}'.format("average penalty reward: ", ', '.join(['{:0.4f}'.format(r) for r in scaled_penalty])))
+    print('{:<40} {:>6}'.format("average penalty reward: ", ', '.join(
+        ['{} {:0.4f}'.format(n, r) for n, r in zip(penalty_names, scaled_penalty)])))
     print('{:<40} {:>6}'.format("average walked dist: ", '{:0.10f}'.format(scaled_penalty[-1])))
     print('{:<40} {:>6}'.format("dones: ", '{:0.6f}'.format(average_dones)))
     print('{:<40} {:>6}'.format("lr: ", '{:.4e}'.format(ppo.optimizer.param_groups[0]["lr"])))
